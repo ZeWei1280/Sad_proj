@@ -14,6 +14,8 @@ namespace leveldb {
   struct skiplist_map_node {
     TOID(struct skiplist_map_node) next[SKIPLIST_LEVELS_NUM];
     struct skiplist_map_entry entry;
+    // zewei
+    uint16_t ref_times;
   };
   /* Structure for Hashmap */
   struct entry {
@@ -72,17 +74,39 @@ namespace leveldb {
       assert(!OID_IS_NULL(*current_));
       SetCurrentEntry(current_);
     }
+    //printf("first current_node_ key: %s \n", key().data());
+   // printf("first current_node_ value: %s \n", value().data());
+  
+  
   }
   void PmemIterator::SeekToLast() {
+      // printf("pmem:seek to last\n");
+
     if (data_structure == kSkiplist) {
-      current_ = (pmem_skiplist_->GetLastOID(index_));
-      assert(!OID_IS_NULL(*current_));
-      SetCurrentNode(current_);
+	  // printf("p1\n");
+	  // printf("current file idx: %d\n", index_);
+
+	   current_ = (pmem_skiplist_->GetLastOID(index_));
+	  // printf("p2->current_:%x \n",current_ );
+	   assert(!OID_IS_NULL(*current_));
+	  // printf("p3\n");
+	   SetCurrentNode(current_);
+	  
+	  // if(current_node_->entry.buffer_ptr==nullptr)printf("nullptr QQ\n");
+          // else printf("not nullptr ^^\n");
+	 
+	  // printf("p4\n");
+    
     } else if (data_structure == kHashmap) {
       current_ = pmem_hashmap_->GetLastOID(index_);
       assert(!OID_IS_NULL(*current_));
       SetCurrentEntry(current_);
     }
+   // printf("last current_node_ key: %s \n", key().data());
+   // printf("last current_node_ value: %s \n", value().data());
+    
+   // printf("p5\n");
+
   }
   void PmemIterator::Next() {
     if (data_structure == kSkiplist) {
@@ -101,21 +125,13 @@ namespace leveldb {
     }
   }
   void PmemIterator::Prev() {
-    if (data_structure == kSkiplist) {
-      char* key =  (char *)key_ptr_;
-      current_ = (pmem_skiplist_->GetPrevOID(index_, key));
-      if (OID_IS_NULL(*current_)) {
-        printf("[ERROR][PmemIterator][Prev] OID IS NULL\n");
-      }
+   if (data_structure == kSkiplist) {
+
+      char* keyptr =  (char *)key_ptr_;
+      PMEMoid* tmp = (pmem_skiplist_->GetPrevOID(index_, (char*)keyptr));
+      current_ = tmp;
       SetCurrentNode(current_);
-    } else if (data_structure == kHashmap) {
-      TOID(struct entry) current_toid(*current_);
-      current_ = pmem_hashmap_->GetPrevOID(index_, current_toid);
-      if (OID_IS_NULL(*current_)) {
-        printf("[ERROR][PmemIterator][Next] OID IS NULL\n");
-      }
-      SetCurrentEntry(current_);
-    }
+    } 
   }
 
   bool PmemIterator::Valid() const {
@@ -136,7 +152,7 @@ namespace leveldb {
     }
   }
   Slice PmemIterator::key() const {
-    if (data_structure == kSkiplist) {
+    if (data_structure == kSkiplist) {    
       assert(!OID_IS_NULL(*current_));
       uint32_t key_len;
       char* ptr = GetKeyAndLengthFromBuffer(current_node_->entry.buffer_ptr, &key_len);
@@ -177,6 +193,17 @@ namespace leveldb {
   Status PmemIterator::status() const {
     return Status::OK();
   }
+
+  /*--------------------------------------*/
+  // zewei
+  uint16_t PmemIterator::refTimes(){
+      return current_node_->ref_times;
+  }
+  /*--------------------------------------*/
+
+
+
+
   PMEMoid* PmemIterator::key_oid() const {
     return key_oid_;
   }

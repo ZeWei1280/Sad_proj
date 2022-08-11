@@ -56,6 +56,8 @@ struct skiplist_map_entry {
 struct skiplist_map_node {
 	TOID(struct skiplist_map_node) next[SKIPLIST_LEVELS_NUM];
 	struct skiplist_map_entry entry;
+	// zewei
+	uint16_t ref_times;
 };
 
 /* 
@@ -114,6 +116,15 @@ int skiplist_map_clear(PMEMobjpool* pop, TOID(struct skiplist_map_node) map) {
 	TOID(struct skiplist_map_node) next = D_RO(map)->next[0];
 	while (!TOID_EQUALS(next, NULL_NODE)) {
 		D_RW(next)->entry.buffer_ptr = nullptr;
+		/*--------------*/
+		// zewei
+		//std::cout << "clear key, refTimes: "
+		//	<< D_RW(next)->ref_times
+		//	<< std::endl;
+
+		D_RW(next)->ref_times = 0;
+		/*--------------*/	
+	
 		next = D_RO(next)->next[0];
 	}
 	return 0;
@@ -251,6 +262,8 @@ int skiplist_map_create_insert(PMEMobjpool* pop,
 	TX_BEGIN(pop) {
 		new_node = TX_ZNEW(struct skiplist_map_node);
 		D_RW(new_node)->entry.buffer_ptr = nullptr;
+		// zewei
+		D_RW(new_node)->ref_times = 0;
 
 		skiplist_map_insert_find(pop, map, path);
 		skiplist_map_insert_node(new_node, path);
@@ -267,7 +280,7 @@ int skiplist_map_create_insert(PMEMobjpool* pop,
 int skiplist_map_insert(PMEMobjpool* pop, 
 												TOID(struct skiplist_map_node) map, 
 												TOID(struct skiplist_map_node)* current_node,
-												char* key, char* buffer_ptr, int key_len, int index) {
+												char* key, char* buffer_ptr, int key_len, int index, uint16_t refTimes/*zewei*/) {
 	int ret = 0;
 	TOID(struct skiplist_map_node) new_node = D_RW(*current_node)->next[0];
 	// if (TOID_IS_NULL(new_node) || TOID_EQUALS(new_node, NULL_NODE)) {
@@ -287,6 +300,16 @@ int skiplist_map_insert(PMEMobjpool* pop,
 	}
 	*current_node = new_node;
 	D_RW(new_node)->entry.buffer_ptr = buffer_ptr;
+
+	/*-----------------------------------------------------*/
+	// zewei
+	D_RW(new_node)->ref_times = refTimes;
+	//std::cout << "insert key: "
+	//	<< key
+	//	<< ", reftimes: " << D_RW(new_node)->ref_times
+	//	<< std::endl;
+	/*-----------------------------------------------------*/
+
 	return ret;
 }
 /*
@@ -297,7 +320,7 @@ int skiplist_map_insert(PMEMobjpool* pop,
 int skiplist_map_insert_by_ptr(PMEMobjpool* pop, 
 											TOID(struct skiplist_map_node) map,
 											TOID(struct skiplist_map_node) *current_node, 
-											char* buffer_ptr, int key_len, int index) {
+											char* buffer_ptr, int key_len, int index, uint16_t refTimes/*zewei*/) {
 	int ret = 0;
 	TOID(struct skiplist_map_node) new_node = D_RW(*current_node)->next[0];
 	if (TOID_IS_NULL(new_node) || TOID_EQUALS(new_node, NULL_NODE)) {
@@ -305,6 +328,14 @@ int skiplist_map_insert_by_ptr(PMEMobjpool* pop,
 		ret = 1;
 	}
 	D_RW(new_node)->entry.buffer_ptr = buffer_ptr;
+
+	/*-----------------------------------------------------*/
+	// zewei
+	D_RW(new_node)->ref_times = refTimes;
+	//std::cout << "insert key by ptr, reftimes: " << D_RW(new_node)->ref_times
+	//	<< std::endl;
+	/*-----------------------------------------------------*/
+
 
 	*current_node = new_node;
 	return ret;
@@ -454,6 +485,9 @@ static void skiplist_map_minimal_find(PMEMobjpool* pop, char* key,
 			} else if (key_len > NUM_OF_TAG_BYTES){
 				key_len -= NUM_OF_TAG_BYTES;
 			}
+		
+
+
 			int res_cmp;
 			res_cmp = memcmp(key, ptr, key_len);
 			// printf("[DEBUG %d] key:'%s' ptr:'%s'\n", current_level, key, (char *)ptr);
@@ -464,7 +498,15 @@ static void skiplist_map_minimal_find(PMEMobjpool* pop, char* key,
 			// Immediatly stop
 			else if (res_cmp == 0) {
 				// printf("Break1 '%s'\n", key);
-				// printf("Break2 '%s'\n", (char *)ptr);
+			        // printf("Break2 '%s'\n", (char *)ptr);
+				/*----------------------------------*/
+				// zewei
+				D_RW(next)->ref_times++;
+				//std::cout << "pmem_refkey: "
+				//	<< key
+				//	<< ", reftimes: " << D_RW(next)->ref_times
+				//	<< std::endl;
+				/*----------------------------------*/
 				*find_res = current_level;
 				break;
 			}
@@ -481,25 +523,32 @@ static void skiplist_map_minimal_find(PMEMobjpool* pop, char* key,
  * skiplist_map_find_prev -- (internal) returns path to searched node, or if
  * node doesn't exist, it will return path to place where key should be.
  */
-static void skiplist_map_find_prev(PMEMobjpool* pop, char* key, 
-																		TOID(struct skiplist_map_node) map, 
-																		TOID(struct skiplist_map_node)* path,
-																		int* find_res) {
+static void skiplist_map_find_prev(
+	PMEMobjpool* pop, 
+	char* key, 
+	TOID(struct skiplist_map_node) map, 
+	TOID(struct skiplist_map_node)* path,
+	int* find_res) 
+{
+/*
+	//printf("skiplist buffer: skiplist_map_find_prev\n");
 	int current_level;
-	TOID(struct skiplist_map_node) active = map;
-	for (current_level = SKIPLIST_LEVELS_NUM - 1;
-			current_level >= 0; current_level--) {
+	for (current_level = SKIPLIST_LEVELS_NUM - 1; current_level >= 0; current_level--) 
+	{
+		//printf("------\n");
+		//printf("current level: %d\n", current_level);
+		TOID(struct skiplist_map_node) active = map;
 		TOID(struct skiplist_map_node) next = D_RO(active)->next[current_level];
-		for ( char *ptr ;
-				!TOID_EQUALS(next, NULL_NODE);
-				next = D_RO(active)->next[current_level]) {
+
+		for ( void *ptr ; !TOID_EQUALS(next, NULL_NODE); next = D_RO(active)->next[current_level]) {
 			// NOTE: Key-matching exactly
+			if (D_RO(next)->entry.buffer_ptr == nullptr) break;
+
 			uint32_t key_len; 
 			ptr = GetKeyAndLengthFromBuffer(D_RO(next)->entry.buffer_ptr, &key_len);
 			// Avoid looping about empty&pre-allocated key
-			if (key_len == 0) {
-				break;
-			}
+			if (key_len == 0)break;
+
 			int res_cmp = memcmp(key, ptr, key_len);
 			if (res_cmp < 0) {
 				break;
@@ -514,7 +563,40 @@ static void skiplist_map_find_prev(PMEMobjpool* pop, char* key,
 		if (*find_res >= 0) { 
 			break;
 		}
+	
+		//printf("active.oid: %x\n", active.oid);
+		//printf("&(active.oid) %x\n", &(active.oid));
+		//printf("path[current_level].oid: %x\n", path[current_level].oid);
+		//printf("&(path[current_level].oid): %x\n", &(path[current_level].oid));
 	}
+
+*/
+//	printf("skiplist buffer: skiplist_map_find_prev\n");
+	int current_level;
+	TOID(struct skiplist_map_node) active = map;
+
+	for (current_level = SKIPLIST_LEVELS_NUM - 1; current_level >= 0; current_level--) {
+		TOID(struct skiplist_map_node) next = D_RO(active)->next[current_level];
+
+		for (void* ptr; !TOID_EQUALS(next, NULL_NODE); next = D_RO(active)->next[current_level]) {
+			if (D_RO(next)->entry.buffer_ptr == nullptr) break;
+
+			uint32_t key_len;
+			ptr = GetKeyAndLengthFromBuffer(D_RO(next)->entry.buffer_ptr, &key_len);
+			if (key_len == 0) break;
+
+			int res_cmp = memcmp(key, (char*)ptr, key_len);
+			if (res_cmp == 0) {
+				*find_res = current_level;
+				break;
+			}
+			else if (res_cmp < 0) break;
+
+			active = next;
+		}
+		path[current_level] = active;
+	}
+//	printf("--end--\n");
 }
 /*
  * skiplist_map_get_last_find -- (internal) returns path to searched node, or if
@@ -523,21 +605,75 @@ static void skiplist_map_find_prev(PMEMobjpool* pop, char* key,
 static void skiplist_map_find_last(PMEMobjpool* pop, 
 																		TOID(struct skiplist_map_node) map, 
 																		TOID(struct skiplist_map_node)* path) {
-	int current_level;
+//	printf("skiplist buffer: find last\n");
+/*	int current_level;
 	TOID(struct skiplist_map_node) active = map;
 	for (current_level = SKIPLIST_LEVELS_NUM - 1;
 			current_level >= 0; current_level--) {
+		printf("\n");
+		printf("current level: %d\n", current_level);
 		TOID(struct skiplist_map_node) next = D_RO(active)->next[current_level];
+
 		for ( void *ptr ;
 				!TOID_EQUALS(next, NULL_NODE);
 				next = D_RO(active)->next[current_level]) {
 			// NOTE: Check only Key-length
-			uint32_t key_len = GetKeyLengthFromBuffer(D_RO(next)->entry.buffer_ptr);
+			printf("next ptr: %u\n", D_RO(next)->entry.buffer_ptr);
+
+			if (D_RO(next)->entry.buffer_ptr == nullptr) break;
+			uint32_t key_len;
+			ptr = GetKeyAndLengthFromBuffer(D_RO(next)->entry.buffer_ptr, &key_len);
+
+			printf("next ptr: %x\n", D_RO(next)->entry.buffer_ptr);
+			printf("key len: %d\n", key_len);
+		
+			printf("next key: '%s'\n", (char *)ptr);
 			// Seek first empty node in each level
+			printf("debug1\n");
+			if (key_len == 0) break;
+			active = next;
+			printf("debug2\n");
+	
+		}
+		path[current_level] = active;
+
+		PMEMoid* res;
+		res = &(path[current_level].oid);
+		printf("path[current_level].oid: %d \n", res);
+
+*/
+
+	int current_level;
+	TOID(struct skiplist_map_node) active = map;
+
+	for (current_level = SKIPLIST_LEVELS_NUM - 1; current_level >= 0; current_level--) {
+		//TOID(struct skiplist_map_node) active = map;
+		TOID(struct skiplist_map_node) next = D_RO(active)->next[current_level];
+		//printf("------\n");
+		//printf("current level: %d\n", current_level);
+		for (void* ptr; !TOID_EQUALS(next, NULL_NODE); next = D_RO(active)->next[current_level]) {	
+			if (D_RO(next)->entry.buffer_ptr == nullptr) {
+		//		printf("last node ID: %x\n", &(active.oid));
+		//		printf("last node ID2: %x\n", &active.oid);
+		//		printf("last ptr: %x\n", D_RO(active)->entry.buffer_ptr);
+		//		printf("next is nullptr\n");
+				break;
+			}			
+			uint32_t key_len;
+			ptr = GetKeyAndLengthFromBuffer(D_RO(next)->entry.buffer_ptr, &key_len);			
 			if (key_len == 0) break;
 			active = next;
 		}
 		path[current_level] = active;
+	//	printf("&(active.oid) %x\n", &(active.oid));
+	//	printf("&(active): %x\n", &(active));
+	//	printf("active.oid: %x\n", active.oid);
+	//	printf("active: %x\n", active);
+
+	//	printf("&(path[current_level].oid): %x\n", &(path[current_level].oid));
+	//	printf("&(path[current_level]): %x\n", &(path[current_level]));
+	//	printf("path[current_level].oid: %x\n", path[current_level].oid);
+	//	printf("path[current_level]: %x\n", path[current_level]);
 	}
 }
 /*
@@ -593,27 +729,54 @@ PMEMoid* skiplist_map_get_OID(PMEMobjpool* pop,
  * skiplist_map_get_prev_OID -- searches for prev OID of the key
  */
 PMEMoid* skiplist_map_get_prev_OID(PMEMobjpool* pop, 
-																		TOID(struct skiplist_map_node) map, 
-																		char* key) {	
+	TOID(struct skiplist_map_node) map, 
+	char* key) 
+{	
+	//printf("skiplist buffer: skiplist_map_get_prev_OID\n");
 	PMEMoid* res;
 	int exactly_found_level = -1;
 	TOID(struct skiplist_map_node) path[SKIPLIST_LEVELS_NUM];
 
+	skiplist_map_minimal_find(pop, key, map, path, &exactly_found_level);
+
+//	skiplist_map_find_prev(pop, key, map, path, &exactly_found_level);
+	printf("k1->exactly_found_level:%d \n", exactly_found_level);
+	
+	if (exactly_found_level != -1)
+       	{
+		printf("k1-1\n");
+		//printf("&(path[0].oid): %x\n", &(path[0].oid));
+		//printf("&((path[0]).oid): %x\n", &((path[0]).oid));
+		//res = &(path[0].oid);
+		res = const_cast<PMEMoid*>(&(path[exactly_found_level].oid));
+		//printf("res : %x \n",res);
+		return res;
+	} 
+	
+	res = &(path[0].oid);
+	printf("res : %x \n", res);
+	return res;
+}
+/*-----------------------------------------------------------*/
+
+
+PMEMoid* test_skiplist_map_get_prev_OID(PMEMobjpool* pop, TOID(struct skiplist_map_node) map, char* key) {
+
+	PMEMoid* res;
+	int exactly_found_level = -1;
+	TOID(struct skiplist_map_node) path[SKIPLIST_LEVELS_NUM];
 	skiplist_map_find_prev(pop, key, map, path, &exactly_found_level);
-	if (exactly_found_level != -1) {
-		res = &(path[exactly_found_level].oid);
-	} else {
-		// FIXME: check prev to -1
-		if (TOID_EQUALS(map, path[0])) {
-			res = const_cast<PMEMoid *>(&OID_NULL);
-		}
-		else {
-			res = &(path[0].oid);
-		}
-	}
+	res = &(path[0].oid);
+	//printf("res: %x \n", res);
 	return res;
 }
 
+
+
+
+
+
+/*------------------------------------------------------------*/
 /*
  * skiplist_map_get_first_OID -- searches for OID of first node
  */
@@ -637,6 +800,7 @@ PMEMoid* skiplist_map_get_last_OID(PMEMobjpool* pop,
 	// Seek non-empty node
 	skiplist_map_find_last(pop, map, path);
 	res = &(path[0].oid);
+//	printf("res: %x \n", res);
 	return res;
 }
 /*

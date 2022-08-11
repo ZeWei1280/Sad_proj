@@ -66,20 +66,29 @@ struct DBImpl::CompactionState {
     uint64_t file_size;
     InternalKey smallest, largest;
   };
+  /*----------------------------------*/
   std::vector<Output> outputs;
+  std::vector<Output> outputs_hot;/*zewei_comp*/
+  /*----------------------------------*/
 
   // State kept for output being generated
   WritableFile* outfile;
+  /*----------------------------------*/
   TableBuilder* builder;
+  TableBuilder* builder_hot;/*zewei_comp*/
+  /*----------------------------------*/
 
   uint64_t total_bytes;
-
+  /*---------------------------------------------*/
   Output* current_output() { return &outputs[outputs.size()-1]; }
+  Output* current_output_hot() { return &outputs_hot[outputs_hot.size()-1]; } /*zewei_comp*/
+  /*---------------------------------------------*/
 
   explicit CompactionState(Compaction* c)
       : compaction(c),
         outfile(nullptr),
         builder(nullptr),
+	builder_hot(nullptr), /*zewei_comp*/
         total_bytes(0) {
   }
 };
@@ -690,6 +699,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
     const Slice max_user_key = meta.largest.user_key();
     if (base != nullptr) {
       level = base->PickLevelForMemTableOutput(min_user_key, max_user_key);
+//	printf("flush to level:%d \n", level);
     }
     edit->AddFile(level, meta.number, meta.file_size,
                   meta.smallest, meta.largest);
@@ -869,7 +879,13 @@ void DBImpl::BackgroundCompaction() {
   Compaction* c;
   bool is_manual = (manual_compaction_ != nullptr);
   InternalKey manual_end;
+  Version* current = versions_->current();/*zewei coldfind*/
   if (is_manual) {
+    /*----------------*/
+    // zewei coldfind
+    current->cold_input.clear();
+    current->cold_output.clear();
+    /*----------------*/
     ManualCompaction* m = manual_compaction_;
     c = versions_->CompactRange(m->level, m->begin, m->end);
     m->done = (c == nullptr);
@@ -891,6 +907,11 @@ void DBImpl::BackgroundCompaction() {
   if (c == nullptr) {
     // Nothing to do
   } else if (!is_manual && c->IsTrivialMove()) {
+    /*----------------*/
+    // zewei coldfind 
+    current->cold_input.clear();
+    current->cold_output.clear();
+    /*----------------*/    
     // Move file to next level
     assert(c->num_input_files(0) == 1);
     FileMetaData* f = c->input(0, 0);
@@ -909,6 +930,11 @@ void DBImpl::BackgroundCompaction() {
         status.ToString().c_str(),
         versions_->LevelSummary(&tmp));
   } else {
+    /*----------------*/
+    // zewei coldfind 
+    current->cold_input.clear();
+    current->cold_output.clear();
+    /*----------------*/
     CompactionState* compact = new CompactionState(c);
     /* PROGRESS: Compaction based on pmem */
     status = DoCompactionWork(compact);
@@ -951,7 +977,7 @@ void DBImpl::BackgroundCompaction() {
     manual_compaction_ = nullptr;
   }
 }
-
+/*----------------------------------------------------------------*/
 void DBImpl::CleanupCompaction(CompactionState* compact) {
   mutex_.AssertHeld();
   if (compact->builder != nullptr) {
@@ -966,13 +992,28 @@ void DBImpl::CleanupCompaction(CompactionState* compact) {
     const CompactionState::Output& out = compact->outputs[i];
     pending_outputs_.erase(out.number);
   }
+
+  /*---------------------*/
+  // zewei_comp
+  if (compact->builder_hot != nullptr) {
+      compact->builder_hot->Abandon();
+      delete compact->builder_hot;
+  }
+  for (size_t i = 0; i < compact->outputs_hot.size(); i++) {
+      const CompactionState::Output& out_hot = compact->outputs_hot[i];
+      pending_outputs_.erase(out_hot.number);
+  }
+  /*---------------------*/
+
   delete compact;
 }
+/*------------------------------------------------------------------*/
 /* SOLVE: Compaction based on pmem */
 Status DBImpl::OpenCompactionOutputFile(CompactionState* compact, 
-                                uint64_t file_number, bool is_file_creation) {
+                                uint64_t file_number, bool is_file_creation, CreatOption creat_option /*zewei_comp*/) {
   assert(compact != nullptr);
-  assert(compact->builder == nullptr);
+  //std::cout << "---call:open compaction outputfile---" << std::endl; // print hotcomp
+  /*assert(compact->builder == nullptr);*/
   // NOTE: Get file_number in advance.
   // uint64_t file_number;
   {
@@ -983,42 +1024,87 @@ Status DBImpl::OpenCompactionOutputFile(CompactionState* compact,
     out.number = file_number;
     out.smallest.Clear();
     out.largest.Clear();
-    compact->outputs.push_back(out);
+    /*-----------------------------*/
+    // zewei_comp
+    if (creat_option == kWarm) 
+        compact->outputs.push_back(out);
+    else if (creat_option == kHot)
+        compact->outputs_hot.push_back(out);
+    /*-----------------------------*/
     mutex_.Unlock();
   }
   // Make the output file
-  std::string fname = TableFileName(dbname_, file_number);
+  //std::string fname = TableFileName(dbname_, file_number);
   Status s;
   if (options_.sst_type == kFileDescriptorSST || is_file_creation) {
+    std::string fname = TableFileName(dbname_, file_number);
     s = env_->NewWritableFile(fname, &compact->outfile);
     if (s.ok()) {
+      //std::cout << "[open] SST: " << file_number<< std::endl; // print hotcomp
       compact->builder = new TableBuilder(options_, compact->outfile);
     }
   } else if (options_.sst_type == kPmemSST) {
-    compact->builder = new TableBuilder(options_, nullptr);
+      /*--------------------------*/
+      if (creat_option == kWarm){
+	//std::cout << "[open] warm: " << file_number << std::endl; // print hotcomp
+         compact->builder = new TableBuilder(options_, nullptr);
+      }
+      // zewei_comp
+      else if (creat_option == kHot){
+	 //std::cout << "[open] hot :" << file_number << std::endl; // print hotcomp
+	 compact->builder_hot = new TableBuilder(options_, nullptr);
+      }
+      /*--------------------------*/
+      //compact->builder = new TableBuilder(options_, nullptr);
   }
+  //std::cout << "---finish:open compaction outputfile---" << std::endl; // print hotcomp
   return s;
 }
+
+/*--------------------------------------------------------------------------*/
 /* DEBUG: Compaction based on pmem */
 Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
-                                      Iterator* input, bool is_file_creation) {
+                                      Iterator* input, bool is_file_creation, CreatOption creat_option /*zewei_comp*/ ) {
+ 
+
+  //std::cout << "---call:finish compaction outputfile---" << std::endl; // print hotcomp
   assert(compact != nullptr);
+  //std::cout << "1" << std::endl; // print hotcomp
   if (is_file_creation) {
     assert(compact->outfile != nullptr);
   }
-  assert(compact->builder != nullptr);
+  //assert(compact->builder != nullptr);
 
+  //std::cout << "2" << std::endl; // print hotcomp
   SSTMakerType sst_type = options_.sst_type;
-
-  const uint64_t output_number = compact->current_output()->number;
+/*---------------------------------------------*/
+  // zewei_comp
+  //std::cout << "3" << std::endl; // print hotcomp
+  uint64_t output_number;
+  if (creat_option==kWarm)
+      output_number = compact->current_output()->number;
+  else if (creat_option==kHot)
+      output_number = compact->current_output_hot()->number;
+/*---------------------------------------------*/
+//  const uint64_t output_number = compact->current_output()->number;
+  //std::cout << "4" << std::endl; // print hotcomp
   assert(output_number != 0);
   //DEBUG:
   // printf("[FinishCompactionOutputFile]\n");
   // Check for iterator errors
   Status s = input->status();
-  const uint64_t current_entries = compact->builder->NumEntries();
+  /*---------*/
+  // zewei_hotcomp
+  //const uint64_t current_entries = compact->builder->NumEntries();
+  uint64_t current_entries = 0;
+  uint64_t current_entries_hot = 0;
+  if (creat_option == kWarm) current_entries = compact->builder->NumEntries();
+  else if (creat_option == kHot) current_entries_hot = compact->builder_hot->NumEntries();
+  /*---------*/
+  //std::cout << "5" << std::endl; // print hotcomp
   if (sst_type == kFileDescriptorSST || is_file_creation) {
     if (s.ok()) {
+      //std::cout << "[finish] SST" << std::endl; // print hotcomp
       s = compact->builder->Finish();
       tiering_stats_.InsertIntoFileSet(output_number);
     } else {
@@ -1026,19 +1112,60 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
     }
   } else if (sst_type == kPmemSST) {
     DelayPmemWriteNtimes(1);
-    s = compact->builder->FinishPmem();
-    tiering_stats_.InsertIntoSkiplistSet(output_number);
+    /*---------------*/
+    // zewei_comp
+    if (creat_option==kWarm){
+         //std::cout << "insert into skiplist [warm]:" << output_number << ", entrries :" << compact->builder->NumEntries() << std::endl;
+	 s = compact->builder->FinishPmem();
+    	 tiering_stats_.InsertIntoSkiplistSet(output_number);
+    }
+    else if (creat_option==kHot && current_entries_hot>0){
+         //std::cout << "insert into skiplist [hot]:" << output_number << ", entrries :" << compact->builder_hot->NumEntries() << std::endl;
+	 s = compact->builder_hot->FinishPmem();
+    	 tiering_stats_.InsertIntoSkiplistSet(output_number);
+    }
+    /*---------------*/ 
+    
     if (options_.tiering_option == kColdDataTiering ||
         options_.tiering_option == kLRUTiering) {
       tiering_stats_.PushToNumberListInPmem(compact->compaction->level()+1, output_number);
     }
   }
-  const uint64_t current_bytes = compact->builder->FileSize();
-  compact->current_output()->file_size = current_bytes;
-  // printf("[DEBUG][num_entries %d][filesize %d]\n", current_entries, current_bytes);
-  compact->total_bytes += current_bytes;
-  delete compact->builder;
-  compact->builder = nullptr;
+  /*--------------------------------*/
+  //std::cout << "6" << std::endl; // print hotcomp
+
+  uint64_t current_bytes;
+  if(creat_option==kWarm){
+    //std::cout << "[finish & reserve] warm:" << output_number << ", entrries :" << compact->builder->NumEntries() << std::endl;
+
+    current_bytes = compact->builder->FileSize();
+    compact->current_output()->file_size = current_bytes;
+    // printf("[DEBUG][num_entries %d][filesize %d]\n", current_entries, current_bytes);
+    compact->total_bytes += current_bytes;
+    delete compact->builder;
+    compact->builder = nullptr;
+  }
+  /*-----------------------*/
+  // zewei_comp
+  else if (creat_option == kHot) {
+      //std::cout << "[finish] hot:" << output_number << ", entrries :" << compact->builder_hot->NumEntries() << std::endl;
+
+      if (current_entries_hot > 0) {
+        //std::cout << "[finish-hot] reserve: " << output_number << std::endl;
+        current_bytes = compact->builder_hot->FileSize();
+      	compact->current_output_hot()->file_size = current_bytes;
+      	compact->total_bytes += current_bytes;
+      }
+      else{
+	//std::cout << "[finish-hot] delete: " << output_number << std::endl;
+     	compact->outputs_hot.pop_back();
+      }
+      
+      delete compact->builder_hot;
+      compact->builder_hot = nullptr;
+  }
+  /*--------------------------------*/
+  //std::cout << "7" << std::endl; // print hotcomp
 
   // Output file
   if (sst_type == kFileDescriptorSST || is_file_creation) {
@@ -1057,12 +1184,14 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
     // delete compact->outfile;
     // compact->outfile = nullptr;
   }
+  //std::cout << "8" << std::endl; // print hotcomp
 
   if (s.ok() && current_entries > 0) {
     // Verify that the table is usable
     Iterator *iter;
     // DEBUG:
     if (sst_type == kFileDescriptorSST || is_file_creation) {
+    printf("OMGOMG~~~~");    
     // if (sst_type == kFileDescriptorSST ) {
       iter = table_cache_->NewIterator(ReadOptions(),
                                        output_number,
@@ -1089,10 +1218,11 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
           (unsigned long long) current_bytes);
     }
   }
+  //std::cout << "---finish:finish compaction outputfile---" << std::endl; // print hotcomp
   // printf("[DEBUG][FinishCompaction1 End] num:%d\n",output_number);
   return s;
 }
-
+/*------------------------------------------------------------------------------*/
 
 Status DBImpl::InstallCompactionResults(CompactionState* compact) {
   mutex_.AssertHeld();
@@ -1102,20 +1232,55 @@ Status DBImpl::InstallCompactionResults(CompactionState* compact) {
       compact->compaction->num_input_files(1),
       compact->compaction->level() + 1,
       static_cast<long long>(compact->total_bytes));
+ 
+  /*--------------------------------------*/
+  // zewei coldfind
+  Version* current = versions_->current();
 
+  if (compact->compaction->level() == 1) {
+      for (int i = 0; i < compact->compaction->num_input_files(0); i++) {
+          //std::cout << "input skiplist number:" << compact->compaction->input(0, i)->number << std::endl;
+          current->cold_input.push_back(compact->compaction->input(0, i));
+      }
+      //std::cout << "output warm :" << compact->outputs.size() << std::endl;
+      for (int i = 0; i < compact->outputs.size(); i++) {
+          const CompactionState::Output& out = compact->outputs[i];
+          FileMetaData* f = new FileMetaData();
+          //std::cout << "f ptr:" << f << std::endl;
+          //std::cout << "output skiplist number:" << out.number<<std::endl;
+          f->number = out.number;
+          f->file_size = out.file_size;
+          f->smallest = out.smallest;
+          f->largest = out.largest;
+          current->cold_output.push_back(f);
+      }
+      //std::cout << "cold_input size:" << current->cold_input.size() << std::endl;
+      //std::cout << "cold_output size:" << current->cold_output.size() << std::endl;
+
+  }
+  /*--------------------------------------*/ 
+  
   // Add compaction outputs
   compact->compaction->AddInputDeletions(compact->compaction->edit());
   const int level = compact->compaction->level();
   for (size_t i = 0; i < compact->outputs.size(); i++) {
     const CompactionState::Output& out = compact->outputs[i];
-    compact->compaction->edit()->AddFile(
-        level + 1,
-        out.number, out.file_size, out.smallest, out.largest);
+    compact->compaction->edit()->AddFile( level + 1, out.number, out.file_size, out.smallest, out.largest);
   }
+  /*---------*/
+  // zewei_comp
+  for (size_t i = 0; i < compact->outputs_hot.size(); i++) {
+      const CompactionState::Output& out = compact->outputs_hot[i];
+      compact->compaction->edit()->AddFile(0, out.number, out.file_size, out.smallest, out.largest);
+  }
+  /*---------*/
   return versions_->LogAndApply(compact->compaction->edit(), &mutex_);
 }
-
+/*-------------------------------------------------------------------------------*/
+//================================================================================
 Status DBImpl::DoCompactionWork(CompactionState* compact) {
+  //std::cout << "---start compaction---" << std::endl; //print hotcomp
+						    //
   const uint64_t start_micros = env_->NowMicros();
   int64_t imm_micros = 0;  // Micros spent doing imm_ compactions
 
@@ -1128,17 +1293,26 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
   assert(versions_->NumLevelFiles(compact->compaction->level()) > 0);
   assert(compact->builder == nullptr);
   assert(compact->outfile == nullptr);
+  
+  //std::cout << "step1:" << std::endl; //print hotcomp
+  //=================================================
   if (snapshots_.empty()) {
     compact->smallest_snapshot = versions_->LastSequence();
   } else {
     compact->smallest_snapshot = snapshots_.oldest()->sequence_number();
   }
 
+
+  //std::cout << "step2:" << std::endl; //print hotcomp
+  //=================================================
   // Release mutex while we're actually doing the compaction work
   mutex_.Unlock();
   // SOLVE: Need to analyze here
   Iterator* input = versions_->MakeInputIterator(compact->compaction, &tiering_stats_);
   // printf("SeekToFirst1\n");
+
+  //std::cout << "step3:" << std::endl; //print hotcomp
+  //=================================================
   input->SeekToFirst();
   // printf("SeekToFirst2\n");
   Status status;
@@ -1158,6 +1332,14 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
   bool lru_trigger = false;        // Opt3
   uint64_t lru_flushed_bytes_written = 0; // Opt3 for stats
   // std::vector<uint64_t> pending_deleted_number_in_pmem; // for synchronization
+ 
+  /*--------------------------*/
+  // zewei_hotcomp
+  //bool hotcomp = compact->compaction->level() == 0;
+  
+  int comp_level = compact->compaction->level();
+  bool hotcomp =  (comp_level==0 || comp_level == 1);
+  /*--------------------------*/
 
   if (options_.ds_type == kSkiplist) {
     switch(options_.tiering_option) {
@@ -1187,8 +1369,12 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
     }
   }
 
+  // uint32_t cry=0;
   // printf("Start iteration\n");
   for (; input->Valid() && !shutting_down_.Acquire_Load(); ) {
+    
+    //std::cout << "step3.1:" << std::endl; //print hotcomp
+    //===================================
     // printf("key:'%s'\n", input->key());
     // Check skiplist's free_list is full
     // Prioritize immutable compaction work
@@ -1204,29 +1390,74 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
       imm_micros += (env_->NowMicros() - imm_start);
     }
 
+
+    //std::cout << "step3.2:" << std::endl; //print hotcomp
+    //===================================
     Slice key = input->key();
-    if (compact->compaction->ShouldStopBefore(key) &&
-        compact->builder != nullptr) {
-      if (write_pmem_buffer) {
-        uint64_t file_number = compact->current_output()->number;
-        PmemBuffer* pmem_buffer = 
-                options_.pmem_buffer[file_number % NUM_OF_BUFFER];
-        compact->builder->FlushBufferToPmemBuffer(pmem_buffer, file_number);
-        write_pmem_buffer = false;
-      }
-      status = FinishCompactionOutputFile(compact, input, need_file_creation);
-      // reset tiering-trigger flag
-      need_file_creation = false;
-      maintain_flag = false;
-      if (!status.ok()) {
-        break;
-      }
+    /*-------------------------*/
+    // zewei_hotcomp
+    if (compact->compaction->ShouldStopBefore(key)) {
+	   // std::cout<<"should stop before"<<std::endl; // print hotcomp
+        if (compact->builder != nullptr) {
+            //std::cout << "should stop warm" << std::endl; // print hotcomp
+            if (write_pmem_buffer) {
+                uint64_t file_number = compact->current_output()->number;
+                PmemBuffer* pmem_buffer =
+                    options_.pmem_buffer[file_number % NUM_OF_BUFFER];
+                compact->builder->FlushBufferToPmemBuffer(pmem_buffer, file_number);
+                write_pmem_buffer = false;
+            }
+	    //std::cout << "finish 1:" << std::endl; //print hotcomp
+            status = FinishCompactionOutputFile(compact, input, need_file_creation, kWarm); // need file creation
+            /*------------------------------------------------*/
+            // JH
+            // reset tiering-trigger flag
+            need_file_creation = false;
+            maintain_flag = false;
+            /*------------------------------------------------*/
+
+            if (!status.ok()) {
+                break;
+            }
+        }
+
+        if (compact->builder_hot != nullptr) {
+	    //std::cout << "should stop hot" << std::endl; // print hotcomp
+	    //std::cout << "finish 2:" << std::endl; //print hotcomp
+            status = FinishCompactionOutputFile(compact, input, need_file_creation, kHot);
+        }
+
+        if (!status.ok()) {
+            break;
+        }
     }
+    /*-------------------------*/
+    //if (compact->compaction->ShouldStopBefore(key) &&
+    //    compact->builder != nullptr) {
+    //  if (write_pmem_buffer) {
+    //    uint64_t file_number = compact->current_output()->number;
+    //    PmemBuffer* pmem_buffer = 
+    //            options_.pmem_buffer[file_number % NUM_OF_BUFFER];
+    //    compact->builder->FlushBufferToPmemBuffer(pmem_buffer, file_number);
+    //    write_pmem_buffer = false;
+    //  }
+    //  status = FinishCompactionOutputFile(compact, input, need_file_creation, kWarm /*zewei_comp*/);
+    //  // reset tiering-trigger flag
+    //  need_file_creation = false;
+    //  maintain_flag = false;
+    //  if (!status.ok()) {
+    //    break;
+    //  }
+    //}
 
     // NOTE: Check whether current key is valid. If not, drop = true.
     // Handle key/value, add to state, etc.
+    
+    //std::cout << "step3.3:" << std::endl; //print hotcomp
+    //===================================
     bool drop = false;
     if (!ParseInternalKey(key, &ikey)) {
+      
       // Do not hide error keys
       current_user_key.clear();
       has_current_user_key = false;
@@ -1240,14 +1471,13 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
         has_current_user_key = true;
         last_sequence_for_key = kMaxSequenceNumber;
       }
-
       if (last_sequence_for_key <= compact->smallest_snapshot) {
         // Hidden by an newer entry for same user key
         drop = true;    // (A)
       } else if (ikey.type == kTypeDeletion &&
                  ikey.sequence <= compact->smallest_snapshot &&
                  compact->compaction->IsBaseLevelForKey(ikey.user_key)) {
-        // For this user key:
+	// For this user key:
         // (1) there is no data in higher levels
         // (2) data in lower levels will have larger sequence numbers
         // (3) data in layers that are being compacted here and have
@@ -1269,10 +1499,15 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
         (int)last_sequence_for_key, (int)compact->smallest_snapshot);
 #endif
 
+
+    //std::cout << "step3.4:" << std::endl; //print hotcomp
+    //===================================
     if (!drop) {
       // Open output file if necessary
+      //std::cout << "debug 1" << std::endl; //print hotcomp
       if (compact->builder == nullptr && !maintain_flag ) {
         uint64_t file_number = versions_->NewFileNumber();
+	//std::cout << "debug 1-1" << std::endl; //print hotcomp
 
         /* Check tiering conditions */
         switch (options_.ds_type) {
@@ -1403,101 +1638,255 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
             } 
           break;
         }
+	//std::cout << "debug 2" << std::endl; //print hotcomp
         maintain_flag = true;
-        status = OpenCompactionOutputFile(compact, file_number, need_file_creation);
-        if (!status.ok()) {
-          break;
-        }
+        status = OpenCompactionOutputFile(compact, file_number, need_file_creation, kWarm /*zewei_comp*/);
+        //std::cout << "debug 3" << std::endl; //print hotcomp
+	if (!status.ok()) {
+          break;   
+	}
       }
+
+      /*--------------------------------*/
+      // zewei_hotcomp
+      if (hotcomp && compact->builder_hot == nullptr && !need_file_creation) {
+          uint64_t file_number_hot = versions_->NewFileNumber();
+          //std::cout << "[start] open hot file :"<< file_number_hot << std::endl;
+	  status = OpenCompactionOutputFile(compact, file_number_hot, need_file_creation, kHot);
+          //std::cout << "[done] open hot file :" << file_number_hot << std::endl;
+      }
+      if (!status.ok()) {
+          std::cout << "[hotcomp] Open output file wrong!" << std::endl;
+          break;
+      }
+      /*-------------------------------*/     
+      //std::cout << "debug 4" << std::endl; //print hotcomp
+ 
+
+
+      /*
       if (compact->builder->NumEntries() == 0) {
         compact->current_output()->smallest.DecodeFrom(key);
       }
       compact->current_output()->largest.DecodeFrom(key);
+      */
 
       Slice value = input->value();
       if (sst_type == kFileDescriptorSST || (need_file_creation && maintain_flag)) {
         compact->builder->Add(key, value);
 
+        //-------
+        if (compact->builder->NumEntries() == 0) {
+            compact->current_output()->smallest.DecodeFrom(key);
+        }
+        compact->current_output()->largest.DecodeFrom(key);
+        //------- 
+	 
         // Close output file if it is big enough
         if (compact->builder->FileSize() >=
             compact->compaction->MaxOutputFileSize()) {
-          status = FinishCompactionOutputFile(compact, input, need_file_creation);
+	  //std::cout << "finish 3:" << std::endl; //print hotcomp
+          status = FinishCompactionOutputFile(compact, input, need_file_creation, kWarm /*zewei_comp*/);
           need_file_creation = false;
           maintain_flag = false;
 
-          if (!status.ok()) {
-            break;
-          }
-        }
-      } else if (sst_type == kPmemSST) {
-        uint64_t file_number = compact->current_output()->number;
-        PmemSkiplist* pmem_skiplist;
-        PmemHashmap* pmem_hashmap;
-        switch (options_.ds_type) {
-          case kSkiplist:
-            pmem_skiplist = options_.pmem_skiplist[file_number % NUM_OF_SKIPLIST_MANAGER];
-            if (options_.use_pmem_buffer) {
-              PmemBuffer* pmem_buffer =
-                    options_.pmem_buffer[file_number % NUM_OF_BUFFER];
-              if(input->buffer_ptr() == nullptr) { // SST -> skip list
-                compact->builder->AddToBufferAndSkiplist(pmem_buffer, pmem_skiplist,
-                                                    file_number, key, value);
-                if(!write_pmem_buffer) write_pmem_buffer = true;
-              } else { // skip list -> skip list
-                compact->builder->AddToSkiplistByPtr (pmem_skiplist,
-                              file_number, key, value, input->buffer_ptr());
-              }
-            } else {
-              // Deprecated in this version
-              /*
-              compact->builder->AddToPmemByPtr(pmem_skiplist, 
-                            file_number, key, value,
-                            input->key_ptr(), input->value_ptr());
-              */
-            }
-            break;
-          case kHashmap:
-            pmem_hashmap = options_.pmem_hashmap[file_number % NUM_OF_SKIPLIST_MANAGER];
-            if (options_.use_pmem_buffer) {
-              compact->builder->AddToHashmapByPtr (pmem_hashmap,
-                            file_number, key, value,
-                            input->key_ptr(), input->buffer_ptr());
-            } else {
-              // TODO:
-              // Deprecated in this version
-              /*
-              compact->builder->AddToPmemByPtr(pmem_skiplist, 
-                            file_number, key, value,
-                            input->key_ptr(), input->value_ptr());
-              */
-            }
-            break;
-        }
-        // Close output file if it is big enough
-        if (compact->builder->NumEntries() >=
-            compact->compaction->MaxOutputEntriesNum() -1 ) {
-          if (write_pmem_buffer) {
-            PmemBuffer* pmem_buffer = 
-                    options_.pmem_buffer[file_number % NUM_OF_BUFFER];
-            compact->builder->FlushBufferToPmemBuffer(pmem_buffer, file_number);
-            write_pmem_buffer = false;
-          }
-          status = FinishCompactionOutputFile(compact, input, need_file_creation);
-          need_file_creation = false;
-          maintain_flag = false;
           if (!status.ok()) {
             break;
           }
         }
       }
+          /*---------------------------------------------------------*/
+          // zewei_hotcomp
+          else if (sst_type == kPmemSST){
 
+		//++cry;
+                uint16_t ref_times = input->refTimes();
+		//if(ref_times!=0 && hotcomp)std::cout<<"reftimes: "<<ref_times<<std::endl;
+                // warm
+                if (!hotcomp || (hotcomp &&  ref_times < HOT_THRESHOLD)/* cry%2==1)*/) { 
+       
+	
+       		    //-------
+           	    if (compact->builder->NumEntries() == 0) { 
+              	    compact->current_output()->smallest.DecodeFrom(key);
+              	    }
+           	    compact->current_output()->largest.DecodeFrom(key);
+           	    //-------
+       
+		    uint16_t file_number_warm = compact->current_output()->number;
+                    PmemSkiplist* pmem_skiplist_warm;
+                    pmem_skiplist_warm = options_.pmem_skiplist[file_number_warm % NUM_OF_SKIPLIST_MANAGER];
+                    PmemBuffer* pmem_buffer_warm = options_.pmem_buffer[file_number_warm % NUM_OF_BUFFER];
+                    // SST -> skip list
+                    if (input->buffer_ptr() == nullptr) {
+                        compact->builder->AddToBufferAndSkiplist(pmem_buffer_warm, pmem_skiplist_warm, file_number_warm, key, value, 0);
+                        if (!write_pmem_buffer) write_pmem_buffer = true;
+                    }
+                    // skip list -> skip list
+                    else {
+                        compact->builder->AddToSkiplistByPtr(pmem_skiplist_warm, file_number_warm, key, value, input->buffer_ptr(), 0 );
+                    }
+
+
+                    //----------
+                    // warm太滿
+                    if (compact->builder->NumEntries() >= compact->compaction->MaxOutputEntriesNum() - 1) {
+                        if (write_pmem_buffer) {
+                            //PmemBuffer* pmem_buffer_warm = options_.pmem_buffer[file_number_warm % NUM_OF_BUFFER];
+                            compact->builder->FlushBufferToPmemBuffer(pmem_buffer_warm, file_number_warm); //把右邊flush到左邊，透過builder的rep->buffer
+                            write_pmem_buffer = false;
+                        }
+                        //----//
+                        //std::cout << "finish 4:" << std::endl; //print hotcomp
+		       	status = FinishCompactionOutputFile(compact, input, need_file_creation, kWarm /*zewei_comp*/); //壓縮完成，結束寫入對象
+                        need_file_creation = false; //在這裡本來就為false，所以沒差
+                        maintain_flag = false;
+                        //----//
+                        if (!status.ok()) {
+                            break;
+                        }
+                    }
+
+                }
+                // hot
+                else if (hotcomp && ref_times >= HOT_THRESHOLD/*cry%2==0*/) {
+
+    		    /*----------------------------------------------------------------------------*/
+                    // zewei_hotcomp fixed
+                    if (compact->builder_hot->NumEntries() == 0) {
+                        compact->current_output_hot()->smallest.DecodeFrom(key);
+                    }
+                    compact->current_output_hot()->largest.DecodeFrom(key);
+                    /*----------------------------------------------------------------------------*/
+      		    uint16_t file_number_hot = compact->current_output_hot()->number;
+                    PmemSkiplist* pmem_skiplist_hot;
+                    pmem_skiplist_hot = options_.pmem_skiplist[file_number_hot % NUM_OF_SKIPLIST_MANAGER];
+                    PmemBuffer* pmem_buffer_hot = options_.pmem_buffer[file_number_hot % NUM_OF_BUFFER];
+                    // SST -> skip list
+                    if (input->buffer_ptr() == nullptr) {
+                        // ref_times不給過，所以照理來說不會走這，下面的if write_pmem_buffer不影響、也不會走，可刪掉
+                        compact->builder_hot->AddToBufferAndSkiplist(pmem_buffer_hot, pmem_skiplist_hot, file_number_hot, key, value, 0);
+                        if (!write_pmem_buffer) write_pmem_buffer = true;
+                    }
+                    // skip list -> skip list
+                    else {
+                        compact->builder_hot->AddToSkiplistByPtr(pmem_skiplist_hot, file_number_hot, key, value, input->buffer_ptr(), 0 );
+                    }
+
+
+                    //----------
+                    // hot太滿
+                    if (compact->builder_hot->NumEntries() >= compact->compaction->MaxOutputEntriesNum() - 1) {
+                        if (write_pmem_buffer) {
+                            //PmemBuffer* pmem_buffer = options_.pmem_buffer[file_number_hot % NUM_OF_BUFFER];
+                            compact->builder_hot->FlushBufferToPmemBuffer(pmem_buffer_hot, file_number_hot); //把右邊flush到左邊，透過builder的rep->buffer
+                            write_pmem_buffer = false;
+                        }
+                        //----//
+			//std::cout << "finish 5:" << std::endl; //print hotcomp
+                        status = FinishCompactionOutputFile(compact, input, need_file_creation, kHot /*zewei_comp*/); //壓縮完成，結束寫入對象
+
+			need_file_creation = false; //在這裡本來就為false，所以沒差
+                        //maintain_flag = false; 優秀的hot設計不需要此flag
+                        //----//
+                        if (!status.ok()) {
+                            break;
+			}
+
+		    }
+                }
+
+          }
+
+
+//      else if (sst_type == kPmemSST) {
+//        uint64_t file_number = compact->current_output()->number;
+//        PmemSkiplist* pmem_skiplist;
+//        PmemHashmap* pmem_hashmap;
+//        switch (options_.ds_type) {
+//          case kSkiplist:
+//            pmem_skiplist = options_.pmem_skiplist[file_number % NUM_OF_SKIPLIST_MANAGER];
+//            if (options_.use_pmem_buffer) {
+//              PmemBuffer* pmem_buffer =
+//                    options_.pmem_buffer[file_number % NUM_OF_BUFFER];
+//              if(input->buffer_ptr() == nullptr) { // SST -> skip list
+//                      /*----tmp out----*/
+//                      // uint16_t tmp = input->refTimes();
+//                      //if (tmp != 0)
+//                      //    std::cout << " pmem key: "<< tmp << std::endl;
+//                      /*---------------*/ 
+//		      compact->builder->AddToBufferAndSkiplist(pmem_buffer, pmem_skiplist,
+//                                                    file_number, key, value, 0 /*zewei*/);
+//                if(!write_pmem_buffer) write_pmem_buffer = true;
+//              } else { // skip list -> skip list
+//		       //
+//                    /*----tmp out----*/
+//		    // uint16_t tmp =input->refTimes();
+//                    // if (tmp!=0)
+//                    //     std::cout << " pmem key ref: "<<tmp << std::endl;
+//                    /*---------------*/
+//
+//                compact->builder->AddToSkiplistByPtr (pmem_skiplist,
+//                              file_number, key, value, input->buffer_ptr(), 0 /*zewei*/);
+//              }
+//            } else {
+//              // Deprecated in this version
+//              /*
+//              compact->builder->AddToPmemByPtr(pmem_skiplist, 
+//                            file_number, key, value,
+//                            input->key_ptr(), input->value_ptr());
+//              */
+//            }
+//            break;
+//          case kHashmap:
+//            pmem_hashmap = options_.pmem_hashmap[file_number % NUM_OF_SKIPLIST_MANAGER];
+//            if (options_.use_pmem_buffer) {
+//              compact->builder->AddToHashmapByPtr (pmem_hashmap,
+//                            file_number, key, value,
+//                            input->key_ptr(), input->buffer_ptr());
+//            } else {
+//              // TODO:
+//              // Deprecated in this version
+//              /*
+//              compact->builder->AddToPmemByPtr(pmem_skiplist, 
+//                            file_number, key, value,
+//                            input->key_ptr(), input->value_ptr());
+//              */
+//            }
+//            break;
+//        }
+//        // Close output file if it is big enough
+//        if (compact->builder->NumEntries() >=
+//            compact->compaction->MaxOutputEntriesNum() -1 ) {
+//          if (write_pmem_buffer) {
+//            PmemBuffer* pmem_buffer = 
+//                    options_.pmem_buffer[file_number % NUM_OF_BUFFER];
+//            compact->builder->FlushBufferToPmemBuffer(pmem_buffer, file_number);
+//            write_pmem_buffer = false;
+//          }
+//          status = FinishCompactionOutputFile(compact, input, need_file_creation, kWarm /*zewei_comp*/);
+//          need_file_creation = false;
+//          maintain_flag = false;
+//          if (!status.ok()) {
+//            break;
+//          }
+//        }
+//      }
+//
+    
+    
+      
     }
-    // printf("Next\n");
+   // printf("Next\n");
     input->Next();
-    // printf("Next End\n");
+   // printf("Next End\n");
   }
   // printf("End iteration\n");
  
+
+
+  //std::cout << "step4:" << std::endl; //print hotcomp
+  //=================================================
   if (status.ok() && shutting_down_.Acquire_Load()) {
     status = Status::IOError("Deleting DB during compaction");
   }
@@ -1509,10 +1898,25 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
       compact->builder->FlushBufferToPmemBuffer(pmem_buffer, file_number);
       write_pmem_buffer = false;
     }
-    status = FinishCompactionOutputFile(compact, input, need_file_creation);
+    //std::cout << "finish 6:" << std::endl; //print hotcomp
+    status = FinishCompactionOutputFile(compact, input, need_file_creation, kWarm /*zewei_comp*/);
     need_file_creation = false;
     maintain_flag = false;
   }
+
+  /*--------------------*/
+  // zewei_hotcomp
+  if (hotcomp && status.ok() && compact->builder_hot != nullptr) {
+      
+      //std::cout << "finish 7:" << std::endl; //print hotcomp
+      status = FinishCompactionOutputFile(compact, input, need_file_creation, kHot /*zewei_comp*/);
+      need_file_creation = false; 
+      maintain_flag = false;      
+  }
+  /*--------------------*/
+
+
+
   if (status.ok()) {
     status = input->status();
   }
@@ -1532,6 +1936,9 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
     }
   }
 
+
+  //std::cout << "step5:" << std::endl; //print hotcomp
+  //=================================================
   // Make compaction-stats
   CompactionStats stats;
   stats.micros = env_->NowMicros() - start_micros - imm_micros;
@@ -1553,11 +1960,41 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
       stats.bytes_written += compact->outputs[i].file_size;
     }
   }
+
+  /*----------------------------------------------*/
+  // zewei_hotcomp
+  CompactionStats stats_hot;
+
+  if (hotcomp && compact->builder_hot!=nullptr) {
+      for (size_t i = 0; i < compact->outputs_hot.size(); i++) {
+          uint64_t number = compact->outputs_hot[i].number;
+          // SST
+          if (tiering_stats_.IsInFileSet(number)) {
+              stats_hot.bytes_written += compact->outputs_hot[i].file_size;
+          }
+          // pmem skiplist
+          else if (tiering_stats_.IsInSkiplistSet(number)) {
+              uint64_t estimated_written = (compact->outputs_hot[i].file_size / 120) * 8; // pointer = 8bytes
+              stats_hot.bytes_written += estimated_written;
+          }
+          // wrong
+          else {
+              printf("hotcomp wrong estimation, um...maybe not wrong:D :\n", number);
+              stats.bytes_written += compact->outputs_hot[i].file_size;
+          }
+      }
+  }
+  /*----------------------------------------------*/
+
+
+
   // LRU stats
   stats.bytes_written += lru_flushed_bytes_written;
 
   mutex_.Lock();
   stats_[compact->compaction->level() + 1].Add(stats);
+  if(hotcomp)stats_[compact->compaction->level()].Add(stats_hot);/*zewei_hotcomp*/
+
 
   // Actual insertion into current Version
   if (status.ok()) {
@@ -1597,6 +2034,8 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
 
       if (options_.sst_type == kPmemSST && 
             options_.ds_type == kSkiplist) {
+        //std::cout << "Delete skip list number:" << file_number << std::endl;
+
         PmemSkiplist* pmem_skiplist = 
                 options_.pmem_skiplist[file_number % NUM_OF_SKIPLIST_MANAGER];
         pmem_skiplist->DeleteFile(file_number);
@@ -1612,10 +2051,12 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
       }
     }
   }
+  //std::cout << "---end compaction---" << std::endl;// print hotcomp
   // printf("End background compaction\n");
   return status;
 }
 
+//=================================================================================
 namespace {
 
 struct IterState {
@@ -1654,7 +2095,7 @@ Iterator* DBImpl::NewInternalIterator(const ReadOptions& options,
     list.push_back(imm_->NewIterator());
     imm_->Ref();
   }
-  versions_->current()->AddIterators(options, &list, &tiering_stats_, fileSet, skiplistSet, &preserve_flag);
+  versions_->current()->AddIterators(options, &list, &tiering_stats_, fileSet, skiplistSet,preserve_flag);
   Iterator* internal_iter =
       NewMergingIterator(&internal_comparator_, &list[0], list.size());
   versions_->current()->Ref();

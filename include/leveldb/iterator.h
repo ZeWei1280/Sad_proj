@@ -70,6 +70,14 @@ class LEVELDB_EXPORT Iterator {
   // the iterator.
   // REQUIRES: Valid()
   virtual Slice value() const = 0;
+  
+  /*------------------------------*/
+  // zewei
+
+  virtual uint16_t refTimes() {return 0;}
+
+  /*-----------------------------*/
+
 
   // JH
   virtual PMEMoid* key_oid() const {return nullptr;};

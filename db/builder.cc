@@ -125,7 +125,8 @@ Status BuildTable(const std::string& dbname,
           switch (options.ds_type) {
             case kSkiplist:
               builder->AddToBufferAndSkiplist(pmem_buffer, pmem_skiplist, 
-                                          file_number, key, iter->value());
+                                          file_number, key, iter->value(),
+					  iter->refTimes() /*zewei*/);
               break;
             case kHashmap:
               builder->AddToBufferAndHashmap(pmem_buffer, pmem_hashmap,

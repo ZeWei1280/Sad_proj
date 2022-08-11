@@ -38,6 +38,7 @@
 #include <errno.h>
 #include <inttypes.h>
 
+#include <vector>
 #include <string>
 #include <chrono>
 #include <iostream>
@@ -86,9 +87,9 @@ struct buckets {
 	/* number of buckets */
 	size_t nbuckets;
 	/* array_size of buckets */
-	size_t buckets_size[];
+	std::vector<size_t> buckets_size;
 	/* array of lists */
-	struct entries_head bucket[];
+	std::vector<struct entries_head> bucket;
 };
 
 POBJ_LIST_HEAD(iterator_head, struct entry);

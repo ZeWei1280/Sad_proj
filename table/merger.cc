@@ -44,11 +44,20 @@ class MergingIterator : public Iterator {
   }
 
   virtual void SeekToLast() {
+    //printf("merger:seek to last\n");
+    //printf("n_: %d\n", n_);
     for (int i = 0; i < n_; i++) {
+      //printf("i start: %d\n", i);
       children_[i].SeekToLast();
+      //printf("i finish: %d\n", i);
+
     }
+    //printf("m1\n");
     FindLargest();
+    //printf("m2\n");
     direction_ = kReverse;
+    //printf("m3\n");
+
   }
 
   virtual void Seek(const Slice& target) {
@@ -134,6 +143,17 @@ class MergingIterator : public Iterator {
     }
     return status;
   }
+
+  /*------------------------------------------*/
+  // zewei
+  uint16_t refTimes() {
+      return current_->refTimes();
+  }
+  /*------------------------------------------*/
+
+
+
+
   PMEMoid* key_oid() const {
     return current_->key_oid();
   }

@@ -64,6 +64,16 @@ class MemTableIterator: public Iterator {
     return GetLengthPrefixedSlice(key_slice.data() + key_slice.size());
   }
 
+
+
+  /*-----------------------------------------------------------*/
+  // zewei
+  
+  virtual uint16_t refTimes(){ return iter_.refTimes(); }
+  
+  /*-----------------------------------------------------------*/
+ 
+ 
   virtual Status status() const { return Status::OK(); }
 
  private:

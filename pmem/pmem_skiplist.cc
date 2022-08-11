@@ -16,6 +16,8 @@ namespace leveldb {
   struct skiplist_map_node {
     TOID(struct skiplist_map_node) next[SKIPLIST_LEVELS_NUM];
     struct skiplist_map_entry entry;
+    // zewei
+    uint16_t ref_times;
   };
   // Register root-manager & node structrue
   // Skiplist single-node
@@ -185,27 +187,28 @@ namespace leveldb {
 
   /* Wrapper functions */
   void PmemSkiplist::Insert(char* key, char* buffer_ptr, int key_len, 
-                            uint64_t file_number) {
+                            uint64_t file_number, uint16_t refTimes) {
     uint64_t actual_index = GetActualIndex(&free_list_, &allocated_map_, 
                                                   file_number);
     int result = skiplist_map_insert(GetPool(), 
                                       skiplists_[actual_index], 
                                       &current_node[actual_index],
                                       key, buffer_ptr,
-                                      key_len, actual_index);
+                                      key_len, actual_index
+				      , refTimes/*zewei*/);
     if(result) { 
       fprintf(stderr, "[ERROR] insert %d\n", file_number);  
       abort();
     } 
   }
   void PmemSkiplist::InsertByPtr(char* buffer_ptr,
-                                 int key_len, uint64_t file_number) {
+                                 int key_len, uint64_t file_number, uint16_t refTimes/*zewei*/) {
     uint64_t actual_index = GetActualIndex(&free_list_, &allocated_map_, 
                                                   file_number);
     int result = skiplist_map_insert_by_ptr(GetPool(), 
                                       skiplists_[actual_index], 
                                       &current_node[actual_index],
-                                      buffer_ptr, key_len, actual_index);
+                                      buffer_ptr, key_len, actual_index, refTimes/*zewei*/);
     if(result) { 
       fprintf(stderr, "[ERROR] insert_by_oid %d\n", file_number);  
       abort();
@@ -240,10 +243,18 @@ namespace leveldb {
 
   /* Iterator functions */
   PMEMoid* PmemSkiplist::GetPrevOID(uint64_t file_number, char* key) {
-    uint64_t actual_index = GetActualIndex(&free_list_, &allocated_map_, 
+   /* uint64_t actual_index = GetActualIndex(&free_list_, &allocated_map_, 
                                                   file_number);
     return skiplist_map_get_prev_OID(GetPool(), skiplists_[actual_index], key);
+   */
+    uint64_t actual_index = GetActualIndex(&free_list_, &allocated_map_, file_number);
+    PMEMoid* tmp = test_skiplist_map_get_prev_OID(GetPool(), skiplists_[actual_index], key);
+    //printf("getprev->tmp: %x \n", tmp);
+    return tmp;
+
   }
+ 
+ 
   PMEMoid* PmemSkiplist::GetOID(uint64_t file_number, char* key) {
     uint64_t actual_index = GetActualIndex(&free_list_, &allocated_map_, 
                                                   file_number);
@@ -255,8 +266,9 @@ namespace leveldb {
     return skiplist_map_get_first_OID(GetPool(), skiplists_[actual_index]);
   }
   PMEMoid* PmemSkiplist::GetLastOID(uint64_t file_number) {
-    uint64_t actual_index = GetActualIndex(&free_list_, &allocated_map_, 
-                                                  file_number);
+   // printf("pmemskiplist: get last OID\n");
+    uint64_t actual_index = GetActualIndex(&free_list_, &allocated_map_, file_number);
+   // printf("pmemskiplist: actual index-> %d\n", actual_index);
     return skiplist_map_get_last_OID(GetPool(), skiplists_[actual_index]);
   }
 

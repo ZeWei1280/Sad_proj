@@ -20,7 +20,7 @@
 #include <libpmemobj++/make_persistent.hpp>
 #include <libpmemobj++/transaction.hpp>
 #include <libpmemobj++/pool.hpp>
-
+#include <libpmemobj.h>
 
 // use pmem with c++ bindings
 namespace pobj = pmem::obj;
@@ -66,8 +66,8 @@ namespace leveldb {
 
     /* Wrapper functions */
     void Insert(char* key, char* buffer_ptr, 
-                      int key_len, uint64_t file_number);
-    void InsertByPtr(char* buffer_ptr, int key_len, uint64_t file_number);
+                      int key_len, uint64_t file_number, uint16_t refTimes/*zewei*/);
+    void InsertByPtr(char* buffer_ptr, int key_len, uint64_t file_number, uint16_t refTimes/*zewei*/);
     void InsertNullNode(uint64_t file_number);
     // [Deprecated]
     // char* Get(int index, char *key);

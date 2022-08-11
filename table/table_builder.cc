@@ -168,7 +168,7 @@ void TableBuilder::AddToPmemByPtr(PmemSkiplist* pmem_skiplist, uint64_t number,
 /* Skiplist + use_pmem_buffer */
 void TableBuilder::AddToBufferAndSkiplist(
                         PmemBuffer* pmem_buffer, PmemSkiplist* pmem_skiplist, 
-                        uint64_t number, const Slice& key, const Slice& value) {
+                        uint64_t number, const Slice& key, const Slice& value, uint16_t refTimes /*zewei*/) {
   Rep* r = rep_;
   assert(!r->closed);
   if (!ok()) return;
@@ -190,7 +190,7 @@ void TableBuilder::AddToBufferAndSkiplist(
 
   // Add to pmem_skiplist
   pmem_skiplist->Insert((char *)key.data(), r->start_offset + r->buffer_offset, 
-                        key.size(), number);
+                        key.size(), number, refTimes /*zewei*/ );
 
   // printf("start_offset %d '%d', total_length\n", r->start_offset, total_length);
   r->offset += (total_length);
@@ -200,11 +200,13 @@ void TableBuilder::FlushBufferToPmemBuffer(PmemBuffer* pmem_buffer, uint64_t num
   Rep* r = rep_;
   assert(!r->closed);
   if (!ok()) return;
+  /*  
   if (r->buffer.size() >= r->options.write_buffer_size) {
     printf("[WARN] table_builder buffer size is over!! '%d'\n", r->buffer.size());
     printf("[Table_builder] %d\n", r->num_entries);
     // abort();
   }
+  */
   Slice buffer_wrapper(r->buffer);
   // printf("[DEBUG %d] '%s'\n",buffer_wrapper.size(), buffer_wrapper.data()); // 3,555,846
   // printf("[Sequential_write] file_number %d\n", number);
@@ -212,7 +214,7 @@ void TableBuilder::FlushBufferToPmemBuffer(PmemBuffer* pmem_buffer, uint64_t num
 }
 void TableBuilder::AddToSkiplistByPtr(PmemSkiplist* pmem_skiplist, uint64_t number,
                     const Slice& key, const Slice& value,
-                    char* buffer_ptr) {
+                    char* buffer_ptr, uint16_t refTimes /*zewei*/) {
   Rep* r = rep_;
   assert(!r->closed);
   if (!ok()) return;
@@ -223,7 +225,7 @@ void TableBuilder::AddToSkiplistByPtr(PmemSkiplist* pmem_skiplist, uint64_t numb
   r->num_entries++;
   r->offset += (key.size() + value.size());
 
-  pmem_skiplist->InsertByPtr(buffer_ptr, key.size(), number);
+  pmem_skiplist->InsertByPtr(buffer_ptr, key.size(), number, refTimes /*zewei*/);
 }
 
 

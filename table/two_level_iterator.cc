@@ -103,10 +103,15 @@ void TwoLevelIterator::SeekToFirst() {
 }
 
 void TwoLevelIterator::SeekToLast() {
+  printf("two level iterator: seek to last\n");
   index_iter_.SeekToLast();
+  printf("t1\n");
   InitDataBlock();
+  printf("t2\n");
   if (data_iter_.iter() != nullptr) data_iter_.SeekToLast();
+  printf("t3\n");
   SkipEmptyDataBlocksBackward();
+  printf("t4\n");
 }
 
 void TwoLevelIterator::Next() {

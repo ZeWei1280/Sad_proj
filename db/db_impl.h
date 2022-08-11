@@ -121,17 +121,17 @@ class DBImpl : public DB {
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
   Status DoCompactionWork(CompactionState* compact)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
+/*-------------------------------------------------------------------------------------*/
 //   Status OpenCompactionOutputFile(CompactionState* compact);
   Status OpenCompactionOutputFile(CompactionState* compact, 
-                                    uint64_t file_number, bool is_file_creation);
+                                    uint64_t file_number, bool is_file_creation, CreatOption creat_option /*zewei_comp*/);
 //   Status FinishCompactionOutputFile(CompactionState* compact, Iterator* input);
   // JH
   Status FinishCompactionOutputFile(CompactionState* compact, Iterator* input,
-                                    bool is_file_creation);
+                                    bool is_file_creation, CreatOption creat_option /*zewei_comp*/);
   Status InstallCompactionResults(CompactionState* compact)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
+/*------------------------------------------------------------------------------------*/
   // Constant after construction
   Env* const env_;
   const InternalKeyComparator internal_comparator_;

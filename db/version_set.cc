@@ -277,6 +277,7 @@ class Version::LevelFilesConcatIteratorFromPmem : public Iterator {
     current_->SeekToFirst();
   }
   virtual void SeekToLast() {
+    // printf("version_set:seek to last\n");
     current_index_ = size_-1;
     current_ = pmem_iterator[current_index_];
     current_->SeekToLast();
@@ -298,15 +299,24 @@ class Version::LevelFilesConcatIteratorFromPmem : public Iterator {
     assert(Valid());
     // if Prev is not null, just run Prev()
     // else, point to previous iterator
+    //printf("version_set->prev\n");
+
     current_->Prev();
+    //printf("p1");
+
     if (!current_->Valid()) {
+      //printf("p2");
       if (!(current_index_ == 0)) {
+	//printf("p3");
         current_index_ -= 1;
         current_ = pmem_iterator[current_index_];
         current_->SeekToLast();
       }
     }
+    //printf("p4");   
   }
+ 
+ 
   Slice key() const {
     assert(Valid());
     return current_->key();
@@ -370,7 +380,9 @@ void Version::AddIterators(const ReadOptions& options,
                            Tiering_stats* tiering_stats,
                            std::vector<FileMetaData *>* fileSet,
                            std::vector<FileMetaData *>* skiplistSet,
-                           bool preserve_flag) {
+                           bool &preserve_flag) {
+
+  //printf("AddIterators\n"); 
   // Initialize fileSet and skiplistSet
   if (!preserve_flag) {
     for (int level = 1; level < config::kNumLevels; level++) {
@@ -381,15 +393,17 @@ void Version::AddIterators(const ReadOptions& options,
 
   // Level 0
   // printf("Level 0\n");
+  // printf("level 0 size: %d \n", files_[0].size());
+
   for (size_t i = 0; i < files_[0].size(); i++) {
     uint64_t number = files_[0][i]->number;
     if (tiering_stats->IsInFileSet(number)) {
-      // printf("file '%d' ", number);
+       //printf("level0-file '%d'\n ", number);
       iters->push_back(
           vset_->table_cache_->NewIterator(
               options, number, files_[0][i]->file_size));
     } else if (tiering_stats->IsInSkiplistSet(number)) {
-      // printf("skiplist '%d' ", number);
+       //printf("level0-skiplist '%d'\n ", number);
       iters->push_back(
           vset_->table_cache_->NewIteratorFromPmem(
               options, number, files_[0][i]->file_size));
@@ -402,16 +416,16 @@ void Version::AddIterators(const ReadOptions& options,
   // Levels > 0
   for (int level = 1; level < config::kNumLevels; level++) {
     if (!files_[level].empty()) {
-      // printf("Level %d\n", level);
+      //printf("Level %d\n", level);
       for (int i=0; i < files_[level].size(); i++) {
         uint64_t number = files_[level][i]->number;
         if (tiering_stats->IsInFileSet(number)) {
           if (!preserve_flag) {
             fileSet[level].push_back(files_[level][i]);
-            // printf("file '%d' ", number);
+            //printf("file '%d'\n ", number);
           }
         } else if (tiering_stats->IsInSkiplistSet(number)) {
-          // printf("skiplist '%d' ", number);
+          //printf("skiplist '%d'\n ", number);
           if (!preserve_flag) {
             skiplistSet[level].push_back(files_[level][i]);
           }
@@ -421,14 +435,17 @@ void Version::AddIterators(const ReadOptions& options,
         }
       }
       // printf("\n");
+      // printf("file size '%d' \n", fileSet[level].size());
       if (fileSet[level].size() > 0) {
-          // printf("file size '%d' \n", fileSet[level].size());
+       // printf("file size '%d' \n", fileSet[level].size());
         iters->push_back(NewTwoLevelIterator(
           new Version::LevelFileNumIterator(vset_->icmp_, &fileSet[level]),
           &GetFileIterator, vset_->table_cache_, options));
       } 
+
+      // printf("skiplist size '%d' \n", skiplistSet[level].size());
       if (skiplistSet[level].size() > 0) {
-          // printf("skiplist size '%d' \n", skiplistSet[level].size());
+        //printf("skiplist size '%d' \n", skiplistSet[level].size());
         iters->push_back(new Version::LevelFilesConcatIteratorFromPmem(
             vset_->icmp_, 
             vset_->options_->pmem_skiplist,
@@ -519,7 +536,7 @@ void Version::ForEachOverlapping(Slice user_key, Slice internal_key,
     }
   }
 }
-
+//=======================================================================================
 Status Version::Get(const Options& options_,
                     const ReadOptions& options,
                     const LookupKey& k,
@@ -564,7 +581,76 @@ Status Version::Get(const Options& options_,
       std::sort(tmp.begin(), tmp.end(), NewestFirst);
       files = &tmp[0];
       num_files = tmp.size();
-    } else {
+    } 
+        /*--------------------------------------*/
+    // zewei coldfind
+    else if (level == 2) {
+        uint32_t cold_index = FindFile(vset_->icmp_, cold_input, ikey);
+        //printf("--cold find-- \n");
+        if (cold_index < cold_input.size()) {
+            cold_index = FindFile(vset_->icmp_, cold_output, ikey);
+            if (cold_index >= cold_output.size()) {
+                files = nullptr;
+                 num_files = 0;
+	        //
+                /*
+	        uint32_t index = FindFile(vset_->icmp_, files_[level], ikey);
+                if (index >= num_files) {
+                    files = nullptr;
+                    num_files = 0;
+                }
+                else {
+                    tmp2 = files[index];
+                    if (ucmp->Compare(user_key, tmp2->smallest.user_key()) < 0) {
+                        // All of "tmp2" is past any data for user_key
+                        files = nullptr;
+                        num_files = 0;
+                    }
+                    else {
+                        files = &tmp2; //found file
+                        num_files = 1;
+                    }
+                }
+		*/
+                //
+            }
+            else {
+                tmp2 = cold_output[cold_index];
+                if (ucmp->Compare(user_key, tmp2->smallest.user_key()) < 0) {
+                    // All of "tmp2" is past any data for user_key
+                    files = nullptr;
+                    num_files = 0;
+                }
+                else {
+                    files = &tmp2; //found file
+                    num_files = 1;
+                }
+            }
+	    //printf("coldfind set\n");
+        }
+        else {
+            uint32_t index = FindFile(vset_->icmp_, files_[level], ikey);
+            if (index >= num_files) {
+                files = nullptr;
+                num_files = 0;
+            }
+            else {
+                tmp2 = files[index];
+                if (ucmp->Compare(user_key, tmp2->smallest.user_key()) < 0) {
+                    // All of "tmp2" is past any data for user_key
+                    files = nullptr;
+                    num_files = 0;
+                }
+                else {
+                    files = &tmp2; //found file
+                    num_files = 1;
+                }
+            }
+        }
+    }
+    
+    /*--------------------------------------*/
+    else {
           // printf("%d ] %d\n", level, num_files);
       // Binary search to find earliest index whose largest key >= ikey.
       uint32_t index = FindFile(vset_->icmp_, files_[level], ikey);
@@ -583,9 +669,10 @@ Status Version::Get(const Options& options_,
         }
       }
     }
-
-    // SSTMakerType sst_type = options_.sst_type;
-
+/*-------------*/
+//    printf("input_cold size(): %d \n",cold_input.size());
+//    printf("output_cold size(): %d \n", cold_output.size());
+/*-------------*/
     std::set<uint64_t> dup_candidate_number;
     std::set<uint64_t>::iterator dup_candidate_number_iter;
     for (uint32_t i = 0; i < num_files; ++i) {
@@ -628,6 +715,12 @@ Status Version::Get(const Options& options_,
           dup_candidate_number.insert(f->number);
         }
       } else {
+          /*--------*/
+          bool tmp1 = (pmem_skiplist->CheckNumberIsInPmem(f->number));
+          bool tmp2 = tiering_stats->IsInSkiplistSet(f->number);
+          std::cout << "in pmem wrong===> " << tmp1 << std::endl;
+          std::cout << "in skiplist wrong===>  " << tmp2 << std::endl;
+          /*--------*/
         printf("[ERROR][VersionSet][Get] Cannot find %d\n", f->number);
       }
 
@@ -651,6 +744,8 @@ Status Version::Get(const Options& options_,
 
   return Status::NotFound(Slice());  // Use an empty error message for speed
 }
+
+//=======================================================================================
 
 bool Version::UpdateStats(const GetStats& stats) {
   FileMetaData* f = stats.seek_file;
@@ -750,7 +845,7 @@ int Version::PickLevelForMemTableOutput(
   }
   return level;
 }
-
+/*-------------------------------------------------------------------------------------------------*/
 // Store in "*inputs" all files in "level" that overlap [begin,end]
 void Version::GetOverlappingInputs(
     int level,
@@ -795,7 +890,7 @@ void Version::GetOverlappingInputs(
     }
   }
 }
-
+/*---------------------------------------------------------------------------------------------*/
 std::string Version::DebugString() const {
   std::string r;
   for (int level = 0; level < config::kNumLevels; level++) {
@@ -1546,7 +1641,7 @@ Iterator* VersionSet::MakeInputIterator(Compaction* c, Tiering_stats* tiering_st
   // printf("MakeInputIterator End %d \n", num);
   return result;
 }
-
+/*---------------------------------------------------------------------------------------------------------*/
 Compaction* VersionSet::PickCompaction(Tiering_stats* tiering_stats) {
   Compaction* c;
   int level;
@@ -1604,8 +1699,10 @@ Compaction* VersionSet::PickCompaction(Tiering_stats* tiering_stats) {
     for (iter = c->inputs_[layer].begin(); iter != c->inputs_[layer].end(); iter++ ) {
       FileMetaData* tmp = *iter;
       uint64_t number = tmp->number;
+     
+      //std::cout << number << std::endl;
       
-      PmemSkiplist* pmem_skiplist = options_->pmem_skiplist[number % NUM_OF_SKIPLIST_MANAGER];        
+      PmemSkiplist* pmem_skiplist = options_->pmem_skiplist[number % NUM_OF_SKIPLIST_MANAGER];
       if (tiering_stats->IsInFileSet(number)) {
         c->inputs_in_fileset_[layer].push_back(*iter);
       } else if ( tiering_stats->IsInSkiplistSet(number) &&
@@ -1614,6 +1711,12 @@ Compaction* VersionSet::PickCompaction(Tiering_stats* tiering_stats) {
         // pmem_skiplist->Ref(number);
         c->inputs_in_skiplistset_[layer].push_back(*iter);
       } else {
+	  /*--------*/
+          //bool tmp1 = (pmem_skiplist->CheckNumberIsInPmem(number));
+          //bool tmp2 = tiering_stats->IsInSkiplistSet(number);
+          //std::cout << "in pmem wrong===> " << tmp1 << std::endl;
+          //std::cout << "in skiplist wrong===>  " << tmp2 << std::endl;
+          /*--------*/
         printf("[ERROR][VersionSet][PickCompaction] Cannot find %d\n", number);
       }
     }
@@ -1622,7 +1725,7 @@ Compaction* VersionSet::PickCompaction(Tiering_stats* tiering_stats) {
 
   return c;
 }
-
+/*----------------------------------------------------------------------------------------------------*/
 void VersionSet::SetupOtherInputs(Compaction* c) {
   const int level = c->level();
   InternalKey smallest, largest;

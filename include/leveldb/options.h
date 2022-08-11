@@ -46,6 +46,20 @@ enum TieringOption {
   kNoTiering
 };
 
+/*------------------------------*/
+// zewei_comp
+enum CreatOption {
+    kHot,
+    kWarm
+};
+
+
+// zewei_chotcomp
+#define HOT_THRESHOLD 1
+
+/*------------------------------*/
+
+
 // Options to control the behavior of a database (passed to DB::Open)
 struct LEVELDB_EXPORT Options {
   // -------------------

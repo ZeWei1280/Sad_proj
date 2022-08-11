@@ -92,11 +92,11 @@ int skiplist_map_destroy(PMEMobjpool* pop, TOID(struct skiplist_map_node)* map);
 int skiplist_map_insert(PMEMobjpool* pop, 
 		TOID(struct skiplist_map_node) map, 
 		TOID(struct skiplist_map_node)* current_node,
-		char* key, char* buffer_ptr, int key_len, int index);
+		char* key, char* buffer_ptr, int key_len, int index, uint16_t refTimes /*zewei*/);
 int skiplist_map_insert_by_ptr(PMEMobjpool* pop, 
 		TOID(struct skiplist_map_node) map, 
 		TOID(struct skiplist_map_node)* current_node,
-		char* buffer_ptr, int key_len, int index);
+		char* buffer_ptr, int key_len, int index, uint16_t refTimes/*zewei*/);
 int skiplist_map_insert_null_node(PMEMobjpool* pop, 
 		TOID(struct skiplist_map_node) map, 
 		TOID(struct skiplist_map_node)* current_node,
@@ -109,12 +109,14 @@ int skiplist_map_clear(PMEMobjpool* pop, TOID(struct skiplist_map_node) map);
 // [Deprecated]
 // char* skiplist_map_get(PMEMobjpool* pop, TOID(struct skiplist_map_node) map,
 // 		char* key);
-PMEMoid* skiplist_map_get_OID(PMEMobjpool* pop, 
-															TOID(struct skiplist_map_node) map, char* key);
-PMEMoid* skiplist_map_get_prev_OID(PMEMobjpool* pop, 
-																	TOID(struct skiplist_map_node) map, char* key);
+PMEMoid* skiplist_map_get_OID(PMEMobjpool* pop,TOID(struct skiplist_map_node) map, char* key);
+PMEMoid* skiplist_map_get_prev_OID(PMEMobjpool* pop, TOID(struct skiplist_map_node) map, char* key);
 PMEMoid* skiplist_map_get_first_OID(PMEMobjpool* pop, TOID(struct skiplist_map_node) map);
 PMEMoid* skiplist_map_get_last_OID(PMEMobjpool* pop, TOID(struct skiplist_map_node) map);
+/*----------------*/
+PMEMoid* test_skiplist_map_get_prev_OID(PMEMobjpool* pop, TOID(struct skiplist_map_node) map, char* key);
+/*----------------*/
+
 
 int skiplist_map_lookup(PMEMobjpool* pop, TOID(struct skiplist_map_node) map,
 		char* key);

@@ -62,11 +62,11 @@ class LEVELDB_EXPORT TableBuilder {
   // Skiplist + Pmem-buffer
   void AddToBufferAndSkiplist(
                         PmemBuffer* pmem_buffer, PmemSkiplist* pmem_skiplist, 
-                        uint64_t number, const Slice& key, const Slice& value); 
+                        uint64_t number, const Slice& key, const Slice& value, uint16_t refTimes /*zewei*/); 
   void FlushBufferToPmemBuffer(PmemBuffer* pmem_buffer, uint64_t number);
   void AddToSkiplistByPtr(PmemSkiplist* pmem_skiplist, uint64_t number,
                           const Slice& key, const Slice& value,
-                          char* buffer_ptr);
+                          char* buffer_ptr, uint16_t refTimes /*zewei*/);
 
   // Hashmap + Pmem-buffer
   void AddToBufferAndHashmap(

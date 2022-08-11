@@ -41,11 +41,19 @@ class IteratorWrapper {
   Slice key() const         { assert(Valid()); return key_; }
   Slice value() const       { assert(Valid()); return iter_->value(); }
   // Methods below require iter() != nullptr
+
+  /*-------------------------*/
+  // zewei
+  uint16_t refTimes() { assert(iter_); return iter_->refTimes(); }
+  /*-------------------------*/
+
+
   Status status() const     { assert(iter_); return iter_->status(); }
   void Next()               { assert(iter_); iter_->Next();        Update(); }
   void Prev()               { assert(iter_); iter_->Prev();        Update(); }
   void Seek(const Slice& k) { assert(iter_); iter_->Seek(k);       Update(); }
-  void SeekToFirst()        { assert(iter_); iter_->SeekToFirst(); Update(); }
+  void SeekToFirst()        { assert(iter_); iter_->SeekToFirst();
+	/* printf("iter wrapper->seek to last\n");*/ Update(); }
   void SeekToLast()         { assert(iter_); iter_->SeekToLast();  Update(); }
   PMEMoid* key_oid() const { assert(iter_);  return iter_->key_oid(); }
   PMEMoid* value_oid() const { assert(iter_); return iter_->value_oid();}

@@ -1,7 +1,7 @@
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
-
+#include <iostream>
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,11 +48,11 @@ static const char* FLAGS_benchmarks =
     "readrandom,"
     "readrandom,"  // Extra run to allow previous compactions to quiesce
     "readseq,"
-    "readreverse,"
+   "readreverse,"
     "compact,"
     "readrandom,"
     "readseq,"
-    "readreverse,"
+   "readreverse,"
     "fill100K,"
     "crc32c,"
     "snappycomp,"
@@ -276,7 +276,9 @@ class Stats {
       fprintf(stdout, "Microseconds per op:\n%s\n", hist_.ToString().c_str());
     }
     fflush(stdout);
+    //std::cout << "+++++XD+++++" << std::endl;
   }
+
 };
 
 // State shared by all concurrent executions of the same benchmark.
@@ -781,10 +783,15 @@ class Benchmark {
   }
 
   void ReadReverse(ThreadState* thread) {
+    //std::cout << "new iter" << std::endl;
+
     Iterator* iter = db_->NewIterator(ReadOptions());
+    //std::cout << "new iter finish" << std::endl;
+
     int i = 0;
     int64_t bytes = 0;
     for (iter->SeekToLast(); i < reads_ && iter->Valid(); iter->Prev()) {
+      //std::cout << "read reverse key" << std::endl; 
       bytes += iter->key().size() + iter->value().size();
       thread->stats.FinishedSingleOp();
       ++i;
@@ -805,9 +812,11 @@ class Benchmark {
         found++;
       } 
       // JH
+      /* 
       else {
         printf("Cannot seek key:'%s'\n", key);
       }
+      */
       thread->stats.FinishedSingleOp();
     }
     char msg[100];

@@ -64,7 +64,7 @@ class Version {
                     Tiering_stats* tiering_stats,
                     std::vector<FileMetaData *>* fileSet,
                     std::vector<FileMetaData *>* skiplistSet,
-                    bool preserve_flag
+                    bool &preserve_flag
                     );
 
   // Lookup the value for key.  If found, store it in *val and
@@ -121,6 +121,13 @@ class Version {
 
   // Return a human readable string that describes this version's contents.
   std::string DebugString() const;
+
+  /*----------------------------------*/
+  // zewei coldfind
+  std::vector <FileMetaData*> cold_input;
+  std::vector <FileMetaData*> cold_output;
+  /*----------------------------------*/
+
 
  private:
   friend class Compaction;

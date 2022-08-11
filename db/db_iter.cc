@@ -1,7 +1,7 @@
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
-
+#include <iostream>
 #include "db/db_iter.h"
 
 #include "db/filename.h"
@@ -84,6 +84,12 @@ class DBIter: public Iterator {
   virtual void Seek(const Slice& target);
   virtual void SeekToFirst();
   virtual void SeekToLast();
+
+
+  /*------------------------------------------*/
+  // zewei
+  //virtual uint16_t refTimes() ;
+  /*------------------------------------------*/
 
   // JH
   virtual PMEMoid* key_oid();
@@ -238,10 +244,12 @@ void DBIter::Prev() {
 
 void DBIter::FindPrevUserEntry() {
   assert(direction_ == kReverse);
+  //printf("DBIter:FindPrevUserEntry\n");
 
   ValueType value_type = kTypeDeletion;
   if (iter_->Valid()) {
     do {
+      //printf("F1\n");
       ParsedInternalKey ikey;
       if (ParseKey(&ikey) && ikey.sequence <= sequence_) {
         if ((value_type != kTypeDeletion) &&
@@ -263,9 +271,12 @@ void DBIter::FindPrevUserEntry() {
           saved_value_.assign(raw_value.data(), raw_value.size());
         }
       }
+      //printf("F2\n");
       iter_->Prev();
+      //printf("F3\n");
     } while (iter_->Valid());
   }
+  //printf("F4\n");
 
   if (value_type == kTypeDeletion) {
     // End
@@ -276,6 +287,8 @@ void DBIter::FindPrevUserEntry() {
   } else {
     valid_ = true;
   }
+  //printf("F5\n");
+
 }
 
 void DBIter::Seek(const Slice& target) {
@@ -304,11 +317,33 @@ void DBIter::SeekToFirst() {
 }
 
 void DBIter::SeekToLast() {
-  direction_ = kReverse;
+/* idirection_ = kReverse;
   ClearSavedValue();
   iter_->SeekToLast();
   FindPrevUserEntry();
+*/
+  //std::cout << "DBIter:seek to last" << std::endl;
+  //std::cout << "-1" << std::endl;
+  direction_ = kReverse;
+  //std::cout << "-2" << saved_key_ <<", "<< saved_value_ << std::endl;
+  ClearSavedValue();
+  //std::cout << "-3" << saved_key_ << ", " << saved_value_ << std::endl;
+  iter_->SeekToLast();
+  //std::cout << "-4" << std::endl;
+  FindPrevUserEntry();
+  //std::cout << "-5" << std::endl;
 }
+
+
+/*------------------------------------------*/
+// zewei
+//uint16_t refTimes() {
+//    return 0;
+//}
+/*------------------------------------------*/
+
+
+
 // [JH][Pmem]
 PMEMoid* DBIter::key_oid() {
   return nullptr;

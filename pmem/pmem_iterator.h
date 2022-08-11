@@ -14,7 +14,7 @@
 // #include <libpmemobj++/make_persistent.hpp>
 // #include <libpmemobj++/transaction.hpp>
 // #include <libpmemobj++/pool.hpp>
-
+#include <libpmemobj.h>
 #include "pmem/pmem_skiplist.h"
 #include "pmem/pmem_hashmap.h"
 #include "pmem/ds/skiplist_buffer.h" // Use Getter from buffer
@@ -59,6 +59,15 @@ namespace leveldb {
     Slice key() const;
     Slice value() const;
     Status status() const;
+
+
+    
+    /*-------------------------*/
+    // zewei
+    uint16_t refTimes();
+    /*-------------------------*/
+
+
 
     virtual PMEMoid* key_oid() const;
     virtual PMEMoid* value_oid() const;
